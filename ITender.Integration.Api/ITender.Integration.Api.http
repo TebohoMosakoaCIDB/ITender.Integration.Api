@@ -1,0 +1,6 @@
+@ITender.Integration.Api_HostAddress = http://localhost:5080
+
+GET {{ITender.Integration.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
