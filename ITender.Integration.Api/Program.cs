@@ -1,18 +1,17 @@
 using FluentValidation;
 using ITender.Integration.Api.Configuration;
-using ITender.Integration.Api.Controllers;
 using ITender.Integration.Api.Infrastructure.Crm;
 using ITender.Integration.Api.Infrastructure.ETender;
 using ITender.Integration.Api.Infrastructure.Security;
 using ITender.Integration.Api.Middleware;
 using ITender.Integration.Api.Services;
+using ITender.Integration.Api.TranferObjects;
 using ITender.Integration.Api.Validation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
-using Microsoft.PowerPlatform.Dataverse.Client;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 
@@ -28,19 +27,7 @@ builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOpt
 builder.Services.AddSingleton<ISecretProtector, AesSecretProtector>();
 
 // ---- Dataverse (client-credentials) ----
-builder.Services.AddSingleton<ServiceClient>(sp =>
-{
-    var crm = sp.GetRequiredService<IOptions<CrmOptions>>().Value;
-    var secret = sp.GetRequiredService<ISecretProtector>().Unprotect(crm.ClientSecret);
-
-    var client = new ServiceClient(
-        $"AuthType=ClientSecret;Url={crm.CrmURL};ClientId={crm.ClientId};ClientSecret={secret};RequireNewInstance=true");
-
-    if (!client.IsReady)
-        throw new InvalidOperationException($"Dataverse connection failed: {client.LastError}");
-    return client;
-});
-builder.Services.AddSingleton<IOrganizationServiceAsync2>(sp => sp.GetRequiredService<ServiceClient>());
+builder.Services.AddSingleton<ICrmServiceFactory, CrmServiceFactory>();
 
 // ---- e-Tender API client ----
 builder.Services.AddTransient<ETenderAuthHandler>();
@@ -56,13 +43,6 @@ builder.Services.AddHttpClient<IETenderClient, ETenderClient>((sp, http) =>
         o.Retry.DisableForUnsafeHttpMethods();
     });
 
-// ---- Application services ----
-builder.Services.AddSingleton<ISastClock, SastClock>();
-builder.Services.AddSingleton<IWorkingDayCalculator, WorkingDayCalculator>();
-builder.Services.AddScoped<IReferenceDataService, PlaceholderReferenceDataService>(); // TODO: Dataverse implementation
-builder.Services.AddScoped<IIntegrationTransactionRepository, IntegrationTransactionRepository>();
-builder.Services.AddScoped<IIntegrationTransactionService, IntegrationTransactionService>();
-
 // ---- Authentication: CRM credentials -> JWT (FR-001, BR-01) ----
 builder.Services.AddSingleton<IPasswordVerifier, PasswordVerifier>();
 builder.Services.AddScoped<ICredentialRepository, CredentialRepository>();
@@ -70,6 +50,20 @@ builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<ICredentialAuthService, CredentialAuthService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<ILookupService, LookupService>();
+builder.Services.AddScoped<IContractRepository, ContractRepository>();
+
+// Registers every AbstractValidator<T> in the assembly (CreateTenderValidator, CancelTenderValidator, ...)
+builder.Services.AddValidatorsFromAssemblyContaining<CreateTenderValidator>();
+
+builder.Services.AddScoped<ITenderRepository, TenderRepository>();
+//builder.Services.AddScoped<ITenderNotificationService, LoggingTenderNotificationService>();
+builder.Services.AddScoped<ITenderService, TenderService>();
+// ---- Application services ----
+builder.Services.AddSingleton<ISastClock, SastClock>();
+builder.Services.AddSingleton<IWorkingDayCalculator, WorkingDayCalculator>(); // TODO: Dataverse implementation
+builder.Services.AddScoped<IReferenceDataService, ReferenceDataService>();
+builder.Services.AddScoped<IIntegrationTransactionRepository, IntegrationTransactionRepository>();
+builder.Services.AddScoped<IIntegrationTransactionService, IntegrationTransactionService>();
 
 var auth = builder.Configuration.GetSection(AuthOptions.Section).Get<AuthOptions>() ?? new AuthOptions();
 var signingKey = AuthOptions.BuildKey(auth.SigningKey); // fails fast if missing or too short
@@ -116,29 +110,23 @@ builder.Services
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("CanAwardTenders", policy =>
-        policy.RequireClaim(
-            PermissionClaimTypes.CanAwardTenders, "true"));
+    options.AddPolicy("CreateAndEditTender",
+        p => p.RequireClaim("permission", Permissions.CreateAndEditTender));
 
-    options.AddPolicy("CanPracticallyCompleteContracts", policy =>
-        policy.RequireClaim(
-            PermissionClaimTypes.CanPracticallyCompleteContracts, "true"));
+    options.AddPolicy("EditAndAdvertiseTender",
+        p => p.RequireClaim("permission", Permissions.EditAndAdvertiseTender));
 
-    options.AddPolicy("CanTerminateContracts", policy =>
-        policy.RequireClaim(
-            PermissionClaimTypes.CanTerminateContracts, "true"));
+    options.AddPolicy("CanAwardTenders",
+        p => p.RequireClaim("permission", Permissions.AwardTenders));
 
-    options.AddPolicy("CanChangeTenderAndSubmitCR", policy =>
-        policy.RequireClaim(
-            PermissionClaimTypes.CanChangeTenderAndSubmitCR, "true"));
+    options.AddPolicy("CanTerminateContracts",
+        p => p.RequireClaim("permission", Permissions.TerminateContracts));
 
-    options.AddPolicy("CreateAndEditTender", policy =>
-        policy.RequireClaim(
-            PermissionClaimTypes.CreateAndEditTender, "true"));
+    options.AddPolicy("CanPracticallyCompleteContracts",
+        p => p.RequireClaim("permission", Permissions.PracticallyCompleteContracts));
 
-    options.AddPolicy("EditAndAdvertiseTender", policy =>
-        policy.RequireClaim(
-            PermissionClaimTypes.EditAndAdvertiseTender, "true"));
+    options.AddPolicy("CanChangeTenderAndSubmitCR",
+        p => p.RequireClaim("permission", Permissions.ChangeTenderAndSubmitCr));
 });
 
 // Throttle the token endpoint (brute-force protection, in addition to CRM account lockout)

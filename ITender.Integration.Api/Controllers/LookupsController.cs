@@ -31,7 +31,7 @@ namespace ITender.Integration.Api.Controllers
             catch (Exception ex)
             {
                 // ideally log ex here
-                return StatusCode(500, "An error occurred while retrieving tender value ranges.");
+                return StatusCode(500, $"An error occurred while retrieving tender value ranges. {ex.Message}");
             }
         }
 
@@ -50,7 +50,7 @@ namespace ITender.Integration.Api.Controllers
             catch (Exception ex)
             {
                 // ideally log ex here
-                return StatusCode(500, "An error occurred while retrieving tender value ranges.");
+                return StatusCode(500, $"An error occurred while retrieving tender value ranges. {ex.Message}");
             }
         }
 

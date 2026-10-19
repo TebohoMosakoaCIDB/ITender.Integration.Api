@@ -1,10 +1,9 @@
-﻿using ITender.Integration.Api.Configuration;
-using ITender.Integration.Api.Constants;
+﻿using ITender.Integration.Api.Constants;
+using ITender.Integration.Api.Infrastructure.Crm;
 using ITender.Integration.Api.Infrastructure.Mappers;
 using ITender.Integration.Api.Models;
 using ITender.Integration.Api.TranferObjects;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Options;
 using Microsoft.PowerPlatform.Dataverse.Client;
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Messages;
@@ -106,8 +105,9 @@ namespace ITender.Integration.Api.Services
     ///    ordered by name; by-id queries are not filtered by state.
     ///  - Option-set lookups (type of contract, tender value range): labels are read from Dataverse metadata and cached for an hour.
     /// </summary>
-    public sealed class LookupService(IOrganizationServiceAsync2 crm, IMemoryCache cache) : ILookupService
+    public sealed class LookupService(ICrmServiceFactory crmFactory, IMemoryCache cache) : ILookupService
     {
+        private readonly IOrganizationServiceAsync2 crm = crmFactory.Service;
         private static readonly TimeSpan OptionSetCacheTime = TimeSpan.FromHours(1);
         private const int MaxPageSize = 500;
 

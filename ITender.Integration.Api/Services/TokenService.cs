@@ -27,29 +27,16 @@ public sealed class TokenService : ITokenService
     {
         var now = DateTime.UtcNow;
         var lifetime = TimeSpan.FromMinutes(_options.AccessTokenMinutes);
+
         var claims = new List<Claim>
-            {
-                new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new(ClaimTypes.Name, user.Username),
+    {
+        new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        new(ClaimTypes.Name, user.Username),
+    };
 
-                new(PermissionClaimTypes.CanAwardTenders,
-                    user.CanAwardTendersPermission.ToString().ToLowerInvariant()),
-
-                new(PermissionClaimTypes.CanPracticallyCompleteContracts,
-                    user.CanPracticallyCompleteContractsPermission.ToString().ToLowerInvariant()),
-
-                new(PermissionClaimTypes.CanTerminateContracts,
-                    user.CanTerminateContractsPermission.ToString().ToLowerInvariant()),
-
-                new(PermissionClaimTypes.CanChangeTenderAndSubmitCR,
-                    user.CanChangeTenderAndSubmitCRpermission.ToString().ToLowerInvariant()),
-
-                new(PermissionClaimTypes.CreateAndEditTender,
-                    user.CreateAndEditTenderPermission.ToString().ToLowerInvariant()),
-
-                new(PermissionClaimTypes.EditAndAdvertiseTender,
-                    user.EditAndAdvertiseTenderPermission.ToString().ToLowerInvariant())
-            };
+        // One claim type ("permission"), one claim per granted permission.
+        foreach (var permission in user.GrantedPermissions)
+            claims.Add(new Claim("permission", permission));
 
         var descriptor = new SecurityTokenDescriptor
         {

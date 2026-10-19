@@ -1,4 +1,5 @@
 using ITender.Integration.Api.Constants;
+using ITender.Integration.Api.Infrastructure.Mappers;
 using Microsoft.PowerPlatform.Dataverse.Client;
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Query;
@@ -38,16 +39,15 @@ public static class CredentialSchema
 }
 
 public sealed record CredentialRecord(
-    Guid Id, string Username, string? Password, bool IsLocked, bool ForcePasswordChange,
-    bool MfaEnabled, int FailedCount, int? StatusCode,
-    // Permission flags emitted as claims by TokenService.
-    // TODO: not loaded from CRM yet, so they default to false (every permission policy will return 403).
-    bool CanAwardTendersPermission = false,
-    bool CanPracticallyCompleteContractsPermission = false,
-    bool CanTerminateContractsPermission = false,
-    bool CanChangeTenderAndSubmitCRpermission = false,
-    bool CreateAndEditTenderPermission = false,
-    bool EditAndAdvertiseTenderPermission = false);
+    Guid Id,
+    string Username,
+    string? Password,
+    bool IsLocked,
+    bool ForcePasswordChange,
+    bool MfaEnabled,
+    int FailedCount,
+    int? StatusCode,
+    IReadOnlyList<string> GrantedPermissions);
 
 public interface ICredentialRepository
 {
@@ -57,13 +57,13 @@ public interface ICredentialRepository
     Task<bool> RecordFailureAsync(Guid id, int currentCount, int maxAttempts, CancellationToken ct);
 }
 
-public sealed class CredentialRepository(IOrganizationServiceAsync2 crm) : ICredentialRepository
+public sealed class CredentialRepository(ICrmServiceFactory crmFactory) : ICredentialRepository
 {
+    private readonly IOrganizationServiceAsync2 crm = crmFactory.Service;
     public async Task<CredentialRecord?> GetByUsernameAsync(string username, CancellationToken ct)
     {
-        var query = new QueryExpression(CrmEntityNames.Credentials)
-        {
-            ColumnSet = new ColumnSet(
+        var columns = new List<string>
+    {
         CredentialSchema.Name,
         CredentialSchema.Password,
         CredentialSchema.IsLocked,
@@ -71,20 +71,25 @@ public sealed class CredentialRepository(IOrganizationServiceAsync2 crm) : ICred
         CredentialSchema.MfaEnabled,
         CredentialSchema.IncorrectLoginCount,
         CredentialSchema.StatusCode,
-        CredentialSchema.CanAwardTendersPermission,
-        CredentialSchema.CanPracticallyCompleteContractsPermission,
-        CredentialSchema.CanTerminateContractsPermission,
-        CredentialSchema.CanChangeTenderAndSubmitCRpermission,
-        CredentialSchema.CreateAndEditTenderPermission,
-        CredentialSchema.EditAndAdvertiseTenderPermission),
+    };
+        columns.AddRange(PermissionMap.All.Select(p => p.Column));
+
+        var query = new QueryExpression(CrmEntityNames.Credentials)
+        {
+            ColumnSet = new ColumnSet(columns.ToArray()),
             TopCount = 1,
             NoLock = true
         };
-        // The password is NEVER part of the query; it is verified in code.
         query.Criteria.AddCondition(CredentialSchema.Name, ConditionOperator.Equal, username);
 
         var e = (await crm.RetrieveMultipleAsync(query, ct)).Entities.FirstOrDefault();
         if (e is null) return null;
+
+        // Only grant permissions explicitly set to true.
+        var granted = PermissionMap.All
+            .Where(p => e.GetAttributeValue<bool?>(p.Column) == true)
+            .Select(p => p.Permission)
+            .ToList();
 
         return new CredentialRecord(
             e.Id,
@@ -95,14 +100,7 @@ public sealed class CredentialRepository(IOrganizationServiceAsync2 crm) : ICred
             e.GetAttributeValue<bool?>(CredentialSchema.MfaEnabled) ?? false,
             e.GetAttributeValue<int?>(CredentialSchema.IncorrectLoginCount) ?? 0,
             e.GetAttributeValue<OptionSetValue>(CredentialSchema.StatusCode)?.Value,
-
-            // CRM permissions
-            e.GetAttributeValue<bool?>(CredentialSchema.CanAwardTendersPermission) ?? false,
-            e.GetAttributeValue<bool?>(CredentialSchema.CanPracticallyCompleteContractsPermission) ?? false,
-            e.GetAttributeValue<bool?>(CredentialSchema.CanTerminateContractsPermission) ?? false,
-            e.GetAttributeValue<bool?>(CredentialSchema.CanChangeTenderAndSubmitCRpermission) ?? false,
-            e.GetAttributeValue<bool?>(CredentialSchema.CreateAndEditTenderPermission) ?? false,
-            e.GetAttributeValue<bool?>(CredentialSchema.EditAndAdvertiseTenderPermission) ?? false);
+            granted);
     }
 
     // Partial updates only: the stored password and other columns are never rewritten.

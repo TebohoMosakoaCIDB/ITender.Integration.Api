@@ -18,8 +18,11 @@ public interface IIntegrationTransactionRepository
     Task CompleteAsync(Guid id, string status, string responseJson, CancellationToken ct);
 }
 
-public sealed class IntegrationTransactionRepository(IOrganizationServiceAsync2 crm) : IIntegrationTransactionRepository
+public sealed class IntegrationTransactionRepository(ICrmServiceFactory crmFactory)
+    : IIntegrationTransactionRepository
 {
+    private readonly IOrganizationServiceAsync2 crm = crmFactory.Service;
+
     public async Task<TransactionRecord?> FindAsync(string key, string businessObject, string operation, CancellationToken ct)
     {
         var q = new QueryExpression(CrmEntityNames.IntegrationTransaction)

@@ -69,28 +69,9 @@ public sealed class WorkingDayCalculator : IWorkingDayCalculator
 /// </summary>
 public interface IReferenceDataService
 {
-    Task<bool> EmployerExistsAsync(string employerName, CancellationToken ct);
-    Task<bool> ContractTypeExistsAsync(string contractType, CancellationToken ct);
-    Task<bool> TenderValueRangeExistsAsync(string valueRange, CancellationToken ct);
-    Task<bool> IsValidLocationAsync(string province, string district, string? localMunicipality, CancellationToken ct);
-    Task<bool> IsValidClassAndSubCategoryAsync(string classOfWorks, string subCategory, CancellationToken ct);
-}
-
-/// <summary>
-/// TODO: replace with a Dataverse-backed implementation (your master-data entity names are needed).
-/// It deliberately logs a warning on every call so it cannot be mistaken for real validation.
-/// </summary>
-public sealed class PlaceholderReferenceDataService(ILogger<PlaceholderReferenceDataService> log) : IReferenceDataService
-{
-    public Task<bool> EmployerExistsAsync(string employerName, CancellationToken ct) => Pass(nameof(EmployerExistsAsync));
-    public Task<bool> ContractTypeExistsAsync(string contractType, CancellationToken ct) => Pass(nameof(ContractTypeExistsAsync));
-    public Task<bool> TenderValueRangeExistsAsync(string valueRange, CancellationToken ct) => Pass(nameof(TenderValueRangeExistsAsync));
-    public Task<bool> IsValidLocationAsync(string p, string d, string? l, CancellationToken ct) => Pass(nameof(IsValidLocationAsync));
-    public Task<bool> IsValidClassAndSubCategoryAsync(string c, string s, CancellationToken ct) => Pass(nameof(IsValidClassAndSubCategoryAsync));
-
-    private Task<bool> Pass(string check)
-    {
-        log.LogWarning("Reference-data check {Check} is NOT IMPLEMENTED - returning true.", check);
-        return Task.FromResult(true);
-    }
+    Task<bool> EmployerExistsAsync(Guid employerId, CancellationToken ct);
+    Task<bool> ContractTypeExistsAsync(int contractTypeId, CancellationToken ct);
+    Task<bool> TenderValueRangeExistsAsync(int valueRangeId, CancellationToken ct);
+    Task<bool> IsValidLocationAsync(Guid provinceId, Guid metroDistrictId, Guid? localMunicipalityId, CancellationToken ct);
+    Task<bool> IsValidClassAndSubCategoryAsync(Guid classId, Guid subCategoryId, CancellationToken ct);
 }
