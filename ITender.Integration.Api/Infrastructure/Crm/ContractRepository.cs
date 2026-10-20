@@ -9,6 +9,8 @@ namespace ITender.Integration.Api.Infrastructure.Crm;
 public interface IContractRepository
 {
     Task<Guid> CreateAwardAsync(Guid tenderId, AwardTenderRequest request, CancellationToken ct);
+    Task CompleteContractAsync(Guid contractId, PracticalCompletionRequest request, CancellationToken ct);
+    Task TerminateContractAsync(Guid contractId, TerminateContractRequest request, CancellationToken ct);
 }
 
 public sealed class ContractRepository(ICrmServiceFactory crmFactory) : IContractRepository
@@ -17,6 +19,20 @@ public sealed class ContractRepository(ICrmServiceFactory crmFactory) : IContrac
 
     public async Task<Guid> CreateAwardAsync(Guid tenderId, AwardTenderRequest request, CancellationToken ct)
     {
+        // 1. PREVENT DUPLICATE AWARDS
+        var checkQuery = new QueryExpression(ContractSchema.EntityLogicalName)
+        {
+            ColumnSet = new ColumnSet(ContractSchema.Id),
+            TopCount = 1
+        };
+        checkQuery.Criteria.AddCondition(ContractSchema.TenderId, ConditionOperator.Equal, tenderId);
+
+        var existingContracts = await _crm.RetrieveMultipleAsync(checkQuery, ct);
+        if (existingContracts.Entities.Count > 0)
+        {
+            throw new InvalidOperationException("This Tender has already been awarded a Contract.");
+        }
+
         // 1. Fetch the Tender FIRST (so we can copy the Employer)
         var tender = await _crm.RetrieveAsync(TenderSchema.EntityLogicalName, tenderId, new ColumnSet(TenderSchema.EmployerId), ct);
         var employerRef = tender.GetAttributeValue<EntityReference>(TenderSchema.EmployerId);
@@ -99,5 +115,46 @@ public sealed class ContractRepository(ICrmServiceFactory crmFactory) : IContrac
         await _crm.UpdateAsync(tenderUpdate, ct);
 
         return contractId;
+    }
+
+    public async Task CompleteContractAsync(Guid contractId, PracticalCompletionRequest request, CancellationToken ct)
+    {
+        var contract = new Entity(ContractSchema.EntityLogicalName, contractId)
+        {
+            [ContractSchema.PracticalCompletionDate] = request.CompletionDate,
+            [ContractSchema.EstimatedFinalValueInclVat] = new Money(request.EstimatedFinalValueInclVat!.Value),
+
+            // Assuming 100000002 is the Status Reason for "Completed"
+            [ContractSchema.StatusCode] = new OptionSetValue(100000002)
+        };
+
+        if (request.VariationsValue.HasValue)
+            contract[ContractSchema.EstimatedValueOfVariations] = new Money(request.VariationsValue.Value);
+
+        if (request.AdjustmentsValue.HasValue)
+            contract[ContractSchema.EstimatedValueOfAdjustment] = new Money(request.AdjustmentsValue.Value);
+
+        // Set dispute resolution (assuming 100000000 = Yes, 100000001 = No)
+        contract[ContractSchema.DisputesReferredToResolution] = new OptionSetValue(request.DisputesReferred ? 100000000 : 100000001);
+
+        await _crm.UpdateAsync(contract, ct);
+    }
+
+    //Check with compliance which status to take
+    public async Task TerminateContractAsync(Guid contractId, TerminateContractRequest request, CancellationToken ct)
+    {
+        var contract = new Entity(ContractSchema.EntityLogicalName, contractId)
+        {
+            [ContractSchema.TerminationDate] = request.TerminationDate,
+            [ContractSchema.TerminationReason] = new OptionSetValue(request.ReasonId!.Value),
+            //[ContractSchema.StatusCode] = new OptionSetValue(ContractSchema.StatusTerminated)
+        };
+
+        if (!string.IsNullOrWhiteSpace(request.OtherReason))
+        {
+            contract[ContractSchema.OtherTerminationReason] = request.OtherReason;
+        }
+
+        await _crm.UpdateAsync(contract, ct);
     }
 }

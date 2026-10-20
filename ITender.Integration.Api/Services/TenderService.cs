@@ -4,8 +4,6 @@ using ITender.Integration.Api.Infrastructure.ETender;
 using ITender.Integration.Api.Models;
 using ITender.Integration.Api.TranferObjects;
 using ITender.Integration.Api.Validation;
-using System.Diagnostics.Contracts;
-using System.Security.Policy;
 
 namespace ITender.Integration.Api.Services;
 
@@ -13,6 +11,9 @@ public sealed record AdvertiseResult(int ETenderId, string? ETenderStatus, DateT
 public sealed record PublishResult(int ETenderId, string? ETenderStatus, DateTime PublishedAtUtc);
 public interface ITenderService
 {
+    Task SubmitChangeRequestAsync(Guid tenderId, SubmitChangeRequest request, Guid userId, string correlationId, CancellationToken ct);
+    Task ApproveChangeRequestAsync(Guid tenderId, string correlationId, CancellationToken ct);
+    Task TerminateContractAsync(Guid contractId, TerminateContractRequest request, string correlationId, CancellationToken ct);
     Task<List<LookupItemDto>> GetCancellationReasonsAsync(CancellationToken ct);
     Task<TenderModel?> AdvertiseToITenderAsync(Guid tenderId, CancellationToken ct);
     Task<AdvertiseResult?> AdvertiseToETenderAsync(Guid tenderId, string correlationId, CancellationToken ct);
@@ -24,6 +25,7 @@ public interface ITenderService
     Task<TenderModel?> CancelAsync(Guid tenderId, CancelTenderRequest request, string correlationId, CancellationToken ct);
     Task<TenderModel?> GetByIdAsync(Guid id, CancellationToken ct);
     Task<(IEnumerable<TenderModel> Items, int TotalCount)> GetPagedAsync(TenderFilterRequest filter, CancellationToken ct);
+    Task CompleteContractAsync(Guid contractId, PracticalCompletionRequest request, string correlationId, CancellationToken ct);
 }
 
 public sealed class TenderService(
@@ -37,6 +39,14 @@ public sealed class TenderService(
     private const int StatusAdvertised = 100000000;
     private const int StatusCancelled = 100000001;
 
+    public async Task TerminateContractAsync(Guid contractId, TerminateContractRequest request, string correlationId, CancellationToken ct)
+    {
+        await contracts.TerminateContractAsync(contractId, request, ct);
+
+        log.LogInformation(
+            "Contract {ContractId} terminated. Date: {TerminationDate}. Correlation {CorrelationId}",
+            contractId, request.TerminationDate, correlationId);
+    }
     public Task<List<LookupItemDto>> GetCancellationReasonsAsync(CancellationToken ct)
     => tenders.GetCancellationReasonsAsync(ct);
     public async Task<TenderModel?> GetByIdAsync(Guid id, CancellationToken ct)
@@ -243,5 +253,34 @@ public sealed class TenderService(
             tenderId, contractId, correlationId);
 
         return contractId;
+    }
+    public async Task CompleteContractAsync(Guid contractId, PracticalCompletionRequest request, string correlationId, CancellationToken ct)
+    {
+        // You might want to verify the contract exists and is in an Active state before completing.
+        await contracts.CompleteContractAsync(contractId, request, ct);
+
+        log.LogInformation(
+            "Contract {ContractId} reached practical completion. Date: {CompletionDate}. Correlation {CorrelationId}",
+            contractId, request.CompletionDate, correlationId);
+    }
+
+    public async Task SubmitChangeRequestAsync(Guid tenderId, SubmitChangeRequest request, Guid userId, string correlationId, CancellationToken ct)
+    {
+        var tender = await tenders.GetByIdAsync(tenderId, ct);
+        if (tender is null) throw new InvalidOperationException("Tender not found.");
+
+        if (tender.StatusCodeId != StatusAdvertised)
+            throw new InvalidOperationException("Change requests can only be submitted for Advertised tenders.");
+
+        await tenders.SubmitChangeRequestAsync(tenderId, request, userId, ct);
+
+        log.LogInformation("Change request submitted for Tender {TenderId}. Correlation {CorrelationId}", tenderId, correlationId);
+    }
+
+    public async Task ApproveChangeRequestAsync(Guid tenderId, string correlationId, CancellationToken ct)
+    {
+        await tenders.ApproveChangeRequestAsync(tenderId, ct);
+
+        log.LogInformation("Change request approved for Tender {TenderId}. Correlation {CorrelationId}", tenderId, correlationId);
     }
 }

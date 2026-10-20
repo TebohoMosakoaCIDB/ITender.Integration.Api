@@ -86,8 +86,10 @@
         public const string Awarded = "nv_awarded";
         public const string WithinValidityPeriod = "nv_withinvalidityperiod";
 
-        // Change request
+        // Change Request Fields
         public const string ChangeRequestStatus = "nv_changerequeststatus";
+        public const string ReasonChangeRequest = "nv_reasonchangerequest";
+        public const string ChangeRequestedByExternalUserId = "nv_changerequestedbyexternaluserid";
         public const string ChangeApprovalValidUntil = "nv_changeapprovalvaliduntil";
 
         public const string CancellationReason = "nv_cancelationreason";
@@ -95,8 +97,19 @@
         public const string DateCancelled = "nv_datecancelled"; // Try PascalCase again, or keep it lowercase if it passed
         public const string CancelledByExternalUserId = "nv_cancelledbyexternaluserid";
 
+
+
         // State codes (Dataverse standard)
         public const int StateActive = 0;
         public const int StateInactive = 1;
+
+
+        // Change Request Status OptionSet Values
+        public const int ChangeRequestStatusNone = 100000000;
+        public const int ChangeRequestStatusRequested = 100000001;
+        public const int ChangeRequestStatusPending = 100000002;
+        public const int ChangeRequestStatusApproved = 100000003;
+        public const int ChangeRequestStatusDeclined = 100000004;
+        public const int ChangeRequestStatusCancelled = 100000005;
     }
 }

@@ -22,6 +22,9 @@ public interface ITenderRepository
     Task<Guid> CreateAsync(CreateTenderModel model, CancellationToken ct);
     Task MarkPublishedAsync(Guid id, DateTime dateAdvertised, CancellationToken ct);
     Task<List<LookupItemDto>> GetCancellationReasonsAsync(CancellationToken ct);
+    Task SubmitChangeRequestAsync(Guid tenderId, SubmitChangeRequest request, Guid userId, CancellationToken ct);
+    Task ApproveChangeRequestAsync(Guid tenderId, CancellationToken ct);
+    Task DeclineChangeRequestAsync(Guid tenderId, CancellationToken ct);
 }
 
 public sealed class TenderRepository(ICrmServiceFactory crmFactory) : ITenderRepository
@@ -116,14 +119,12 @@ public sealed class TenderRepository(ICrmServiceFactory crmFactory) : ITenderRep
         var e = (await _crm.RetrieveMultipleAsync(query, ct)).Entities.FirstOrDefault();
         return e is null ? null : TenderMapper.ToDomain(e);
     }
-
     public Task MarkAdvertisedAsync(Guid id, DateTime dateAdvertised, CancellationToken ct)
         => _crm.UpdateAsync(new Entity(TenderEntity, id)
         {
             [TenderSchema.StatusCode] = new OptionSetValue(100000000), // Advertised
             [TenderSchema.DateAdvertised] = dateAdvertised
         }, ct);
-
     public async Task MarkCancelledAsync(
     Guid id,
     Guid reasonId,
@@ -149,7 +150,6 @@ public sealed class TenderRepository(ICrmServiceFactory crmFactory) : ITenderRep
 
         await _crm.UpdateAsync(tender, ct);
     }
-
     public async Task<string?> GetCancellationReasonLabelAsync(Guid reasonId, CancellationToken ct)
     {
         var q = new QueryExpression("nv_tendercancelreason")
@@ -163,9 +163,25 @@ public sealed class TenderRepository(ICrmServiceFactory crmFactory) : ITenderRep
         var result = await _crm.RetrieveMultipleAsync(q, ct);
         return result.Entities.FirstOrDefault()?.GetAttributeValue<string>("nv_name");
     }
-
     public async Task<Guid> CreateAsync(CreateTenderModel model, CancellationToken ct)
     {
+        // 1. PREVENT DUPLICATES
+        if (!string.IsNullOrWhiteSpace(model.EmployerTenderNumber))
+        {
+            var checkQuery = new QueryExpression(TenderSchema.EntityLogicalName)
+            {
+                ColumnSet = new ColumnSet(TenderSchema.Id),
+                TopCount = 1
+            };
+            checkQuery.Criteria.AddCondition(TenderSchema.EmployerTenderNumber, ConditionOperator.Equal, model.EmployerTenderNumber.Trim());
+
+            var existing = await _crm.RetrieveMultipleAsync(checkQuery, ct);
+            if (existing.Entities.Count > 0)
+            {
+                throw new InvalidOperationException($"A tender with Employer Tender Number '{model.EmployerTenderNumber}' already exists.");
+            }
+        }
+
         var tender = new Entity(TenderSchema.EntityLogicalName);
 
         // Notice details
@@ -259,13 +275,78 @@ public sealed class TenderRepository(ICrmServiceFactory crmFactory) : ITenderRep
         tender[TenderSchema.NotAcceptedEmail] = model.NotAcceptedEmail;
         tender[TenderSchema.IsClosed] = false;
 
-        return await _crm.CreateAsync(tender, ct);
-    }
+        var tenderId = await _crm.CreateAsync(tender, ct);
 
+        // Save Contacts
+        if (model.ContactPerson != null && model.ContactPerson.Count > 0)
+        {
+            foreach (var contact in model.ContactPerson)
+            {
+                var contactEntity = new Entity("contact");
+
+                // Standard Dataverse Contact fields
+                contactEntity["firstname"] = contact.PersonToQuery;
+                contactEntity["telephone1"] = contact.TelephoneNumber;
+                contactEntity["emailaddress1"] = contact.Email;
+                contactEntity["mobilephone"] = contact.MobilePhoneNumber;
+                //contactEntity["fax"] = contact.FaxNumber;
+
+                // Custom lookup back to the Tender
+                // Assuming the lookup on the contact table is named 'nv_tenderid'
+                contactEntity["nv_tenderid"] = new EntityReference(TenderSchema.EntityLogicalName, tenderId);
+
+                await _crm.CreateAsync(contactEntity, ct);
+            }
+        }
+
+        return tenderId;
+    }
     public Task MarkPublishedAsync(Guid id, DateTime dateAdvertised, CancellationToken ct)
         => _crm.UpdateAsync(new Entity(TenderEntity, id)
         {
             [TenderSchema.StatusCode] = new OptionSetValue(100000000), // Advertised
             [TenderSchema.DateAdvertised] = dateAdvertised
         }, ct);
+    public async Task SubmitChangeRequestAsync(Guid tenderId, SubmitChangeRequest request, Guid userId, CancellationToken ct)
+    {
+        var tender = new Entity(TenderSchema.EntityLogicalName, tenderId)
+        {
+            // Use the exact OptionSet value for "Requested"
+            [TenderSchema.ChangeRequestStatus] = new OptionSetValue(TenderSchema.ChangeRequestStatusRequested),
+            [TenderSchema.ReasonChangeRequest] = request.Reason,
+            [TenderSchema.ChangeRequestedByExternalUserId] = new EntityReference("contact", userId),
+            [TenderSchema.ChangeApprovalValidUntil] = DateTime.UtcNow.AddDays(7)
+        };
+
+        if (request.NewClosingDateTime.HasValue)
+            tender[TenderSchema.ClosingDateAndTime] = request.NewClosingDateTime.Value;
+
+        if (!string.IsNullOrWhiteSpace(request.NewTitle))
+            tender[TenderSchema.TenderTitle] = request.NewTitle;
+
+        if (!string.IsNullOrWhiteSpace(request.NewDescription))
+            tender[TenderSchema.TendersInvitedFor] = request.NewDescription;
+
+        await _crm.UpdateAsync(tender, ct);
+    }
+    public async Task ApproveChangeRequestAsync(Guid tenderId, CancellationToken ct)
+    {
+        var tender = new Entity(TenderSchema.EntityLogicalName, tenderId)
+        {
+            // Use the exact OptionSet value for "Approved"
+            [TenderSchema.ChangeRequestStatus] = new OptionSetValue(TenderSchema.ChangeRequestStatusApproved)
+        };
+
+        await _crm.UpdateAsync(tender, ct);
+    }
+
+    public async Task DeclineChangeRequestAsync(Guid tenderId, CancellationToken ct)
+    {
+        var tender = new Entity(TenderSchema.EntityLogicalName, tenderId)
+        {
+            [TenderSchema.ChangeRequestStatus] = new OptionSetValue(TenderSchema.ChangeRequestStatusDeclined)
+        };
+
+        await _crm.UpdateAsync(tender, ct);
+    }
 }

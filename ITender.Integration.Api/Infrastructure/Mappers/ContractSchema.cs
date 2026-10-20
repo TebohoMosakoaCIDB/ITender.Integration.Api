@@ -48,6 +48,25 @@
         // The missing fields
         public const string ClassOfConstructionWorksId = "nv_classofconstructionworks";
         public const string TenderValueRange = "nv_tendervaluerange";
-        public const string IsAJV = "nv_isajv"; 
+        public const string IsAJV = "nv_isajv";
+
+        // --- Practical Completion ---
+        public const string PracticalCompletionDate = "nv_practicalcompletiondate";
+
+        // Variations & Adjustments
+        public const string EstimatedValueOfVariations = "nv_Estimatedvalueofvariations";
+        public const string EstimatedValueOfAdjustment = "nv_Estimatedvalueofadjustment";
+        public const string EstimatedFinalValueInclVat = "nv_EstimatedfinalvalueofcontractinclVAT";
+
+        // Dispute Resolution
+        public const string DisputesReferredToResolution = "nv_disputesreferredtodisputeresolutioncontra";
+
+        // --- Termination ---
+        public const string TerminationDate = "nv_terminationdate";
+        public const string TerminationReason = "nv_ReasonForTermination";
+        public const string OtherTerminationReason = "nv_otherterminationreason";
+
+        // Status
+        public const string StatusCode = "statuscode";
     }
 }

@@ -2,8 +2,8 @@
 using ITender.Integration.Api.Middleware;
 using ITender.Integration.Api.Services;
 using ITender.Integration.Api.TranferObjects;
+using ITender.Integration.Api.Validation;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ITender.Integration.Api.Controllers;
@@ -16,6 +16,9 @@ public sealed class TendersController(
     IValidator<CreateTenderModel> createValidator,
     IValidator<CancelTenderRequest> cancelValidator,
     IValidator<AwardTenderRequest> awardValidator,
+    IValidator<PracticalCompletionRequest> completionValidator,
+    IValidator<TerminateContractRequest> terminationValidator,
+    IValidator<SubmitChangeRequest> changeRequestValidator,
     ILogger<TendersController> log) : ControllerBase
 {
     [HttpGet("cancellation-reasons")]
@@ -58,7 +61,7 @@ public sealed class TendersController(
     }
 
     /// <summary>Publish an already-advertised tender to e-Tender.</summary>
-    [HttpPost("{id:guid}/advertise")]
+    [HttpPost("{id:guid}/Publish-to-eTender")]
     [Authorize(Policy = "EditAndAdvertiseTender")]
     public async Task<IActionResult> Advertise(Guid id, CancellationToken ct)
     {
@@ -84,16 +87,23 @@ public sealed class TendersController(
         var correlationId = HttpContext.GetCorrelationId();
 
         var validation = await createValidator.ValidateAsync(model, ct);
-        if (!validation.IsValid)
-            return BadRequest(new
-            {
-                success = false,
-                correlationId,
-                errors = validation.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
-            });
+        if (!validation.IsValid) return BadRequest(new
+        {
+            success = false,
+            correlationId,
+            errors = validation.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
+        });
 
-        var created = await service.CreateAsync(model, ct);
-        return StatusCode(201, new { success = true, correlationId, tender = created });
+        try
+        {
+            var created = await service.CreateAsync(model, ct);
+            return StatusCode(201, new { success = true, correlationId, tender = created });
+        }
+        catch (InvalidOperationException ex)
+        {
+            log.LogWarning(ex, "Duplicate tender creation attempted. Correlation {CorrelationId}", correlationId);
+            return BadRequest(new { success = false, correlationId, message = ex.Message });
+        }
     }
 
     [HttpPost("create-and-publish")]
@@ -218,5 +228,90 @@ public sealed class TendersController(
             log.LogWarning(ex, "Award rejected. Correlation {CorrelationId}", correlationId);
             return BadRequest(new { success = false, correlationId, message = ex.Message });
         }
+    }
+
+    [HttpPost("/api/v1/contracts/{id:guid}/complete")]
+    [Authorize(Policy = "CanPracticallyCompleteContracts")]
+    public async Task<IActionResult> CompleteContract(Guid id, [FromBody] PracticalCompletionRequest request, CancellationToken ct)
+    {
+        var correlationId = HttpContext.GetCorrelationId();
+
+        var validation = await completionValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                correlationId,
+                errors = validation.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
+            });
+        }
+
+        try
+        {
+            await service.CompleteContractAsync(id, request, correlationId, ct);
+            return Ok(new { success = true, correlationId, message = "Contract marked as practically completed." });
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Complete contract failed. Correlation {CorrelationId}", correlationId);
+            return BadRequest(new { success = false, correlationId, message = ex.Message });
+        }
+    }
+
+    [HttpPost("/api/v1/contracts/{id:guid}/terminate")]
+    [Authorize(Policy = "CanTerminateContracts")] // Using the policy we set up in Phase 1
+    public async Task<IActionResult> TerminateContract(Guid id, [FromBody] TerminateContractRequest request, CancellationToken ct)
+    {
+        var correlationId = HttpContext.GetCorrelationId();
+
+        var validation = await terminationValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                correlationId,
+                errors = validation.Errors.Select(e => new { field = e.PropertyName, message = e.ErrorMessage })
+            });
+        }
+
+        try
+        {
+            await service.TerminateContractAsync(id, request, correlationId, ct);
+            return Ok(new { success = true, correlationId, message = "Contract successfully terminated." });
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "Terminate contract failed. Correlation {CorrelationId}", correlationId);
+            return BadRequest(new { success = false, correlationId, message = ex.Message });
+        }
+    }
+
+    [HttpPost("{id:guid}/change-requests")]
+    [Authorize(Policy = "CanChangeTenderAndSubmitCR")]
+    public async Task<IActionResult> SubmitChangeRequest(Guid id, [FromBody] SubmitChangeRequest request, CancellationToken ct)
+    {
+        var correlationId = HttpContext.GetCorrelationId();
+
+        var validation = await changeRequestValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) return BadRequest(new { success = false, errors = validation.Errors });
+
+        // Get User ID from JWT
+        var userIdString = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(userIdString, out var userId)) return Unauthorized();
+
+        await service.SubmitChangeRequestAsync(id, request, userId, correlationId, ct);
+        return Ok(new { success = true, correlationId, message = "Change request submitted and pending approval." });
+    }
+
+    [HttpPost("{id:guid}/change-requests/approve")]
+    [Authorize(Policy = "CanChangeTenderAndSubmitCR")]
+    public async Task<IActionResult> ApproveChangeRequest(Guid id, CancellationToken ct)
+    {
+        var correlationId = HttpContext.GetCorrelationId();
+
+        await service.ApproveChangeRequestAsync(id, correlationId, ct);
+        return Ok(new { success = true, correlationId, message = "Change request approved." });
     }
 }

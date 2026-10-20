@@ -1,5 +1,4 @@
 ﻿using ITender.Integration.Api.Configuration;
-using ITender.Integration.Api.Infrastructure.Crm;
 using ITender.Integration.Api.Models;
 using Microsoft.Xrm.Sdk;
 
